@@ -1,0 +1,7 @@
+# Files kept in this working repository, never published.
+#
+# The public repositories get one commit per release, built from the tracked
+# tree minus these paths: notes and tooling that belong to this machine only.
+AGENTS.md
+HANDOFF.md
+scripts/push-test.sh

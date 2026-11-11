@@ -1,0 +1,162 @@
+name: release
+
+# One tag (v0.7.0) produces: a portable tarball, a .deb, a .rpm, SHA256SUMS,
+# and a GitHub release with all four attached.  The binary is built on Rocky
+# Linux 9 so it runs on RHEL 9 (glibc 2.34) and anything newer; notcurses,
+# libunistring and libdeflate are linked in, libldap stays dynamic.
+#
+# Re-running the workflow by hand with `publish: false` rebuilds the artefacts
+# without touching the release, which is how a failed packaging step is
+# investigated.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, without the leading v (default: CMakeLists.txt)"
+        required: false
+        type: string
+      publish:
+        description: "Create/update the release"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  NFPM_VERSION: "2.48.0"
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          set -euo pipefail
+          PROJECT_VERSION="$(scripts/version.sh)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+            [ -n "$V" ] || V="$PROJECT_VERSION"
+            echo "publish=${{ inputs.publish }}" >> "$GITHUB_OUTPUT"
+          else
+            V="${GITHUB_REF_NAME#v}"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$V" != "$PROJECT_VERSION" ]; then
+            echo "::error::tag/input version $V does not match CMakeLists.txt $PROJECT_VERSION" >&2
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+  # The build host is the oldest distribution we support, not the newest: a
+  # binary built on Ubuntu 24.04 cannot start on RHEL 9.
+  build:
+    needs: version
+    runs-on: ubuntu-24.04
+    container: docker.io/rockylinux/rockylinux:9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools
+        run: |
+          dnf -y install --setopt=install_weak_deps=False \
+            gcc-c++ cmake make tar gzip which file pkgconf-pkg-config \
+            ncurses-devel zlib-devel gpm-devel openldap-devel
+      - name: Portable binary
+        run: scripts/build-static.sh /tmp/portable
+      - name: Stage the tarball
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          mkdir -p dist "stage/slaptop-$VERSION-linux-amd64"
+          cp build-static/slaptop dist/slaptop-linux-amd64
+          cp dist/slaptop-linux-amd64 "stage/slaptop-$VERSION-linux-amd64/slaptop"
+          cp LICENSE README.md CHANGELOG.md "stage/slaptop-$VERSION-linux-amd64/"
+          cp -r docs "stage/slaptop-$VERSION-linux-amd64/docs"
+          tar -C stage -czf "dist/slaptop-$VERSION-linux-amd64.tar.gz" \
+              "slaptop-$VERSION-linux-amd64"
+          file dist/slaptop-linux-amd64
+          echo "Shared libraries required at run time:"
+          ldd dist/slaptop-linux-amd64 | sed 's/^[[:space:]]*//' | awk '{print "  " $1}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slaptop-linux-amd64
+          path: dist/*
+          if-no-files-found: error
+
+  package:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Install nfpm
+        run: |
+          curl -sSL -o nfpm.tgz \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          tar -xzf nfpm.tgz nfpm
+          sudo install -m 0755 nfpm /usr/local/bin/nfpm
+      - name: Build .deb and .rpm
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          rm -rf pkgroot
+          mkdir -p pkgroot
+          cp dist/slaptop-linux-amd64 pkgroot/slaptop
+          cp LICENSE README.md CHANGELOG.md pkgroot/
+          cp -r docs pkgroot/docs
+          (cd pkgroot && PKG_VERSION="$VERSION" PKG_ARCH=amd64 \
+            nfpm package -f "$GITHUB_WORKSPACE/packaging/nfpm.yaml" -p deb -t "$GITHUB_WORKSPACE/dist/")
+          (cd pkgroot && PKG_VERSION="$VERSION" PKG_ARCH=x86_64 \
+            nfpm package -f "$GITHUB_WORKSPACE/packaging/nfpm.yaml" -p rpm -t "$GITHUB_WORKSPACE/dist/")
+          (cd dist && sha256sum ./*.tar.gz ./*.deb ./*.rpm > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    needs: [version, package]
+    if: ${{ needs.version.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ needs.version.outputs.version }}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            python3 packaging/changelog-section.py \
+              "${{ needs.version.outputs.version }}" > /tmp/notes.md
+            # A 0.x release is a pre-release: 1.0.0 is what the README's
+            # stability section promises, and the badge says so.
+            PRERELEASE=""
+            case "${{ needs.version.outputs.version }}" in
+              0.*) PRERELEASE="--prerelease" ;;
+            esac
+            gh release create "$TAG" $PRERELEASE \
+              --title "slaptop ${{ needs.version.outputs.version }}" \
+              --notes-file /tmp/notes.md
+          fi
+          gh release upload "$TAG" dist/* --clobber

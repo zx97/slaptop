@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Refuse a commit that would bring environment data into a public repository.
+set -euo pipefail
+[ -f tools/check_anonymity.py ] || exit 0
+exec python3 tools/check_anonymity.py --staged

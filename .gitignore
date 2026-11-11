@@ -1,0 +1,54 @@
+# Build directories (CMake, Makefile wrapper, sanitizer builds)
+build/
+build-*/
+cmake-build-*/
+Testing/
+
+# Compiled output that can end up outside a build directory.
+# Anchored on purpose: a bare `slaptop` also matched the `include/slaptop/`
+# directory, so every new header there was silently ignored by git.
+/slaptop
+*.o
+*.a
+*.so
+*.so.*
+*.d
+*.dSYM/
+compile_commands.json
+compile_flags.txt
+
+# Coverage and profiler artefacts
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
+perf.data*
+callgrind.out.*
+
+# Debug artefacts
+core
+core.*
+vgcore.*
+*.stackdump
+
+# Patches left behind by merges/rejects
+*.orig
+*.rej
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local logs and scratch files
+*.log
+*.tmp
+
+# Editor / build caches
+.ccls-cache/
+.cache/
+.clangd/

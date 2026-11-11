@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ pkg-config \
+            libnotcurses-dev libldap2-dev libunistring-dev libncurses-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DSLAPTOP_WITH_TUI=ON -DSLAPTOP_WITH_LDAP=ON
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
+      - name: The embedded documentation matches the README
+        run: make check-doc

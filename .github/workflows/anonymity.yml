@@ -1,0 +1,15 @@
+name: anonymity
+
+# A public repository must not carry host names, domains, UIDs or addresses
+# from the environment it was written for.  The same check runs locally in the
+# pre-push hook; this job is the server-side one, for anything that bypasses it.
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/check_anonymity.py

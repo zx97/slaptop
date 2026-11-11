@@ -1,0 +1,42 @@
+# slaptop -- example server list (one remote target per line)
+#
+# Usage:
+#   slaptop --uri-file docs/openldap-servers.example
+#
+# Syntax: one target per line, `#` starts a comment, blank lines are ignored.
+#   <LDAP URI> [key=value ...]
+#
+#   bind=DN           bind DN for this target (anonymous when absent, which is
+#                     enough for cn=monitor: the monitor database is world-readable)
+#   password-file=P   read the password from a file (0600, warned otherwise)
+#   password=VALUE    inline password -- throw-away tests only
+#   starttls=yes      upgrade ldap:// with StartTLS before binding
+#   insecure=yes      accept the server's self-signed certificate (this target only)
+#   name=LABEL        display name instead of host:port
+#
+# The instances (one process each, all built from the same OpenLDAP tree):
+#
+#   name  role                            ldap    ldaps   ldapi (local only)
+#   proxy     proxy: back-ldap + pcache       :1389  :1636  ldapi-proxy
+#   provider  provider + cn=accesslog db      :2389  :2636  ldapi-provider
+#   replica   provider + cn=accesslog db      :3389  :3636  ldapi-replica
+#
+# Remote mode keeps the cn=monitor counters (connections, ops, databases,
+# lloadd tiers) but has no /proc and cannot read cn=config: CPU, RSS, threads,
+# architecture details and the log tail stay empty.  Running slaptop on the
+# server itself is the full view (see slaptop.openldap.conf.example).
+
+ldaps://ldap1.example.com:1636 insecure=yes name=proxy
+ldaps://ldap1.example.com:2636 insecure=yes name=provider
+ldaps://ldap1.example.com:3636 insecure=yes name=replica
+
+# Drop insecure=yes once pki-local-ca is installed on the client machine:
+#   ldaps://ldap1.example.com:3636 name=replica
+
+# StartTLS variant, if the plain listeners ever stop requiring confidentiality:
+#   ldap://ldap1.example.com:3389 starttls=yes insecure=yes name=replica
+
+# Bind with a dedicated monitoring account instead of anonymous.  One target
+# per line: there is no line continuation, and no ~ expansion -- give an
+# absolute path for password-file.
+#   ldaps://ldap1.example.com:3636 bind="uid=user001,ou=Applications,dc=example,dc=com" password-file=/etc/slaptop/monitoring.pw name=replica

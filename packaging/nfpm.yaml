@@ -1,0 +1,61 @@
+# nfpm configuration for the .deb and .rpm packages.
+#
+# Run nfpm from a staging directory that contains these files at these relative
+# paths (the CI calls it "pkgroot"):
+#   slaptop  LICENSE  README.md  CHANGELOG.md  docs/
+#
+# The CI sets:
+#   PKG_VERSION  package version, without the leading "v" (e.g. 0.7.0)
+#   PKG_ARCH     target package architecture: amd64/arm64 for deb,
+#                x86_64/aarch64 for rpm
+#
+# Usage:
+#   (cd pkgroot && PKG_VERSION=0.7.0 PKG_ARCH=amd64 \
+#      nfpm package -f ../packaging/nfpm.yaml -p deb -t ../dist/)
+name: slaptop
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+release: "1"
+section: utils
+priority: optional
+maintainer: Manuel FLURY
+vendor: Manuel FLURY
+homepage: https://github.com/zx97/slaptop
+license: AGPL-3.0-or-later
+description: |
+  Real-time terminal dashboard for one or more OpenLDAP slapd instances.
+
+  Reads /proc, cn=monitor over ldapi://, contextCSN, cn=config and the slapd
+  log file, locally or over SSH, and shows one line per machine: CPU, RSS,
+  threads, connections, operations per type, replication lag, index coverage,
+  connection headroom and the log itself.
+
+contents:
+  - src: slaptop
+    dst: /usr/bin/slaptop
+    file_info:
+      mode: 0755
+  - src: LICENSE
+    dst: /usr/share/doc/slaptop/LICENSE
+  - src: README.md
+    dst: /usr/share/doc/slaptop/README.md
+  - src: CHANGELOG.md
+    dst: /usr/share/doc/slaptop/CHANGELOG.md
+  - src: docs
+    dst: /usr/share/doc/slaptop/docs
+    type: tree
+
+# The release binary links libldap dynamically on purpose (that is what keeps
+# SASL EXTERNAL and ldaps:// working); notcurses, libunistring and libdeflate
+# are linked in.  A host without libldap.so.2 can build the fully static
+# variant described in the README.
+depends:
+  - libldap2
+overrides:
+  rpm:
+    depends:
+      - openldap-libs
+rpm:
+  group: Applications/System
+  summary: Real-time OpenLDAP monitoring dashboard

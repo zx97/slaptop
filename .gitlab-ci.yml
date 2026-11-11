@@ -1,0 +1,96 @@
+# GitLab mirror of the GitHub pipeline: same tests, same artefacts, published
+# as GitLab generic packages and attached to a GitLab release.  crates.io is not
+# involved (this is a C++ program); the GitHub workflow is the only publisher,
+# so the two tag pipelines cannot race on the same version.
+
+stages:
+  - test
+  - package
+  - release
+
+anonymity:
+  stage: test
+  image: python:3
+  script:
+    - python3 tools/check_anonymity.py
+
+test:
+  stage: test
+  image: ubuntu:24.04
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends
+        cmake ninja-build g++ pkg-config make python3
+        libnotcurses-dev libldap2-dev libunistring-dev libncurses-dev
+  script:
+    - cmake -S . -B build -G Ninja -DSLAPTOP_WITH_TUI=ON -DSLAPTOP_WITH_LDAP=ON
+    - cmake --build build -j"$(nproc)"
+    - ctest --test-dir build --output-on-failure
+    - make check-doc
+
+# Release artefacts (tag only, or a pipeline launched by hand with
+# RELEASE_VERSION).  Built on Rocky Linux 9: the oldest distribution the
+# binary must run on, which a newer builder cannot guarantee.
+package:
+  stage: package
+  image: docker.io/rockylinux/rockylinux:9
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web" && $RELEASE_VERSION
+  script:
+    - set -euo pipefail
+    - dnf -y install --setopt=install_weak_deps=False
+        gcc-c++ cmake make tar gzip which file pkgconf-pkg-config
+        ncurses-devel zlib-devel gpm-devel openldap-devel
+    - scripts/build-static.sh /tmp/portable
+    - VERSION="${RELEASE_VERSION:-${CI_COMMIT_TAG#v}}"
+    - mkdir -p dist "stage/slaptop-$VERSION-linux-amd64"
+    - cp build-static/slaptop dist/slaptop-linux-amd64
+    - cp dist/slaptop-linux-amd64 "stage/slaptop-$VERSION-linux-amd64/slaptop"
+    - cp LICENSE README.md CHANGELOG.md "stage/slaptop-$VERSION-linux-amd64/"
+    - cp -r docs "stage/slaptop-$VERSION-linux-amd64/docs"
+    - tar -C stage -czf "dist/slaptop-$VERSION-linux-amd64.tar.gz" "slaptop-$VERSION-linux-amd64"
+    - file dist/slaptop-linux-amd64
+    - ldd dist/slaptop-linux-amd64
+    # nfpm is a static Go binary: the same download works on every image.
+    - curl -sSL -o nfpm.tgz "https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_Linux_x86_64.tar.gz"
+    - tar -xzf nfpm.tgz nfpm
+    - install -m 0755 nfpm /usr/local/bin/nfpm
+    - mkdir -p pkgroot
+    - cp dist/slaptop-linux-amd64 pkgroot/slaptop
+    - cp LICENSE README.md CHANGELOG.md pkgroot/
+    - cp -r docs pkgroot/docs
+    - (cd pkgroot && PKG_VERSION="$VERSION" PKG_ARCH=amd64 nfpm package -f "$CI_PROJECT_DIR/packaging/nfpm.yaml" -p deb -t "$CI_PROJECT_DIR/dist/")
+    - (cd pkgroot && PKG_VERSION="$VERSION" PKG_ARCH=x86_64 nfpm package -f "$CI_PROJECT_DIR/packaging/nfpm.yaml" -p rpm -t "$CI_PROJECT_DIR/dist/")
+    - (cd dist && sha256sum ./*.tar.gz ./*.deb ./*.rpm > SHA256SUMS)
+    - |
+      for f in dist/*.tar.gz dist/*.deb dist/*.rpm dist/SHA256SUMS; do
+        curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+          --upload-file "$f" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/slaptop/$VERSION/$(basename "$f")"
+      done
+  artifacts:
+    paths:
+      - dist/
+    expire_in: never
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web" && $RELEASE_VERSION
+  script:
+    - |
+      set -euo pipefail
+      VERSION="${RELEASE_VERSION:-${CI_COMMIT_TAG#v}}"
+      TAG="${CI_COMMIT_TAG:-v$VERSION}"
+      BASE="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/slaptop/$VERSION"
+      release-cli create \
+        --name "slaptop $VERSION" \
+        --tag-name "$TAG" \
+        --description "Release $VERSION. See CHANGELOG.md and README.md." \
+        --assets-link "{\"name\":\"slaptop-$VERSION-linux-amd64.tar.gz\",\"url\":\"$BASE/slaptop-$VERSION-linux-amd64.tar.gz\"}" \
+        --assets-link "{\"name\":\"slaptop_$VERSION-1_amd64.deb\",\"url\":\"$BASE/slaptop_$VERSION-1_amd64.deb\"}" \
+        --assets-link "{\"name\":\"slaptop-$VERSION-1.x86_64.rpm\",\"url\":\"$BASE/slaptop-$VERSION-1.x86_64.rpm\"}" \
+        --assets-link "{\"name\":\"SHA256SUMS\",\"url\":\"$BASE/SHA256SUMS\"}"

@@ -1,0 +1,72 @@
+# slaptop configuration -- the three slapd instances of the `ldap1.example.com` host
+#
+# Location: ~/.config/slaptop/config   (or: slaptop --config <this file>)
+# Syntax:   `key = value`, `#` starts a comment, `[theme]` opens the theme
+#           section.  Command-line options always win over this file.
+#
+# Example layout (one slapd process per instance, OpenLDAP 2.6,
+# everything owned by the slapd uid):
+#
+#   name  -F directory                                 role
+#   proxy     /opt/openldap/etc/slapd_proxy.d   proxy: back-ldap + pcache, lload tier
+#   provider  /opt/openldap/etc/slapd_provider.d   provider, mdb + cn=accesslog
+#   replica   /opt/openldap/etc/slapd_replica.d   consumer of the provider
+#
+#   name  ldap     ldaps    ldapi socket (local only)
+#   proxy     :1389   :1636   /opt/slapdlogs/var/run/ldapi-proxy
+#   provider  :2389   :2636   /opt/slapdlogs/var/run/ldapi-provider
+#   replica   :3389   :3636   /opt/slapdlogs/var/run/ldapi-replica
+#
+# Run slaptop **on the server itself**:
+#
+#   ssh ldap1.example.com
+#   slaptop                     # three cards: proxy, provider, replica
+#
+# Nothing below lists the instances: they are discovered from /proc, named
+# after their `-F` directory (`slapd_proxy.d` -> `proxy`) and queried over their own
+# ldapi socket.  That is the only mode with CPU/RSS/threads (/proc), the
+# cn=config architecture and the log tail.
+#
+# From another host, use a targets file instead (see openldap-servers.example):
+#
+#   slaptop --uri-file docs/openldap-servers.example
+#
+# There, /proc and cn=config are out of reach: the cards keep the cn=monitor
+# counters, CPU/RSS, the architecture details and the logs stay empty.  Do not
+# combine both: remote targets are *added* to the discovered local ones, so
+# every instance would show up twice.
+
+# --- Collection --------------------------------------------------------------
+
+# /proc sampling period, in seconds (0 < interval <= 60).
+interval = 1.0
+
+# cn=monitor period, in seconds.  Reading the whole monitor tree costs a few
+# percent of one slapd core; 2s keeps it around 0-1%.  Raise it on a busy proxy.
+ldap-interval = 2.0
+
+# SASL peer credentials over ldapi://.  The instances grant
+# `gidNumber=1000+uidNumber=1000,cn=peercred,cn=external,cn=auth` manage on
+# cn=config and unlimited size/time limits on cn=monitor, so run slaptop as the
+# uid that owns the slapd processes (1000 here).  Anonymous reads cn=monitor
+# fine but nothing else; keep EXTERNAL.
+bind = EXTERNAL
+
+# Optional: password file for a simple bind (never a password on the command
+# line, it would show in ps).  Unused with EXTERNAL.
+# password-file = /etc/slaptop/monitoring.pw
+
+# Optional: accept self-signed certificates on ldaps:// (needed only when a
+# target file points at another machine).
+# insecure = true
+
+# --- Theme -------------------------------------------------------------------
+# Colours are #rrggbb; omit a key to keep the built-in palette.
+# Two providers and a proxy produce enough traffic that a 3s log TTL is short:
+# raise it if lines disappear before you can read them.
+
+[theme]
+animate = true
+pixel-graphs = auto
+log-ttl = 4.0
+log-fade = 1.5

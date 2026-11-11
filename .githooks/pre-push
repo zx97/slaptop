@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Last line of defence before a push: the whole tracked tree, not one commit.
+set -euo pipefail
+[ -f tools/check_anonymity.py ] || exit 0
+exec python3 tools/check_anonymity.py

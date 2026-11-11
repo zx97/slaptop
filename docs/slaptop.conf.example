@@ -1,0 +1,111 @@
+# slaptop configuration file
+#
+# Location: $XDG_CONFIG_HOME/slaptop/config or ~/.config/slaptop/config
+# Override with: slaptop --config /path/to/file
+#
+# What the full view needs (ldapi:// enabled, slaptop run as the slapd user, an
+# SSH key registered on each node) is in README.md, "Requirements"; `slaptop
+# --diagnose` checks it on the host and prints the fix for anything missing.
+#
+# Syntax: `key = value`, `#` starts a comment.  Command-line options always
+# win over this file.  Unknown keys are reported on stderr and ignored; a key
+# written in a section that cannot hold it (a `group` inside [theme]) stops the
+# start with an error, because the file would then monitor another environment.
+
+# --- Collection --------------------------------------------------------------
+
+# Seconds between two /proc samples (CPU, RSS, threads).  0 < interval <= 60.
+interval = 1.0
+
+# Seconds between two cn=monitor reads.  Reading the ~87 monitor entries costs
+# 3-5% of one slapd core when done twice per second; 2s brings it to 0-1%.
+ldap-interval = 2.0
+
+# Remote instances to watch when no local slapd is found.  Repeatable.
+# uri-file = ~/ldap-servers.txt
+# One target inline, same syntax as a uri-file line.  Repeatable.
+# uri = ldaps://ldap1.example.com:636 bind="cn=monitor,ou=services,dc=example,dc=org"
+
+# Hosts monitored over SSH with a key, as if they were local: /proc, cn=config,
+# the log file and the ldapi socket all travel through one connection.
+#   user@host key=/path/to/key port=22 name=LABEL instances=proxy,provider,replica compress=on
+# One line per host: a node is a machine, not a slapd process.  A host running
+# slapd_proxy.d, slapd_provider.d and slapd_replica.d yields three cards from a single line;
+# `instances=` restricts the replay to a subset.
+# No LDAP port is given: the instance list comes from `ps`, and the ldapi socket
+# it listens on (`-h ldapi:///run/slapd/slapd_proxy/ldapi`) is forwarded over the
+# same SSH connection, so EXTERNAL works without a password or TLS.
+# `port=` is ssh's port, not slapd's.
+# A host declared both as a node and found locally (i.e. this very machine) is
+# counted once: the duplicate is discarded and the reason printed on exit.
+# `compress=on` turns on ssh compression.  Measured on this lab, the payloads
+# compress 3.4x (ps), 6x (slapd.d mirror) and 9x (log tail, /proc/net/tcp);
+# on a LAN the link is not the limit (same wall time with and without), so it
+# is off by default — worth it on a DMZ or WAN link, where bytes are scarce.
+# Six nodes at most, counted after the file and the command line are merged.
+# node-file = ~/.config/slaptop/nodes
+# node = user@example.com name=lab
+
+# --- Environments ------------------------------------------------------------
+# A group is one environment; `--group <name>` selects it, `--list-groups`
+# prints them, and `group =` picks the default.  Inside a group, `node`,
+# `node-file`, `uri` and `uri-file` replace the top-level ones.
+#
+# A key in the wrong section is refused (exit 2), not ignored: `group = lab`
+# written after the [theme] keys would otherwise select nothing.
+
+# group = dev
+#
+# [group dev]
+# node = ldap3.example.com                 # one line per host: its instances follow
+# node = ldap1.example.com
+#
+# [group acc]
+# node = ldap1
+# uri  = ldaps://lb-acc.example.com:636 insecure=yes
+
+# --- Run mode ---------------------------------------------------------------
+# Same meaning as the flags, and the command line always wins.
+
+# once = false
+# watch = 5
+# duration = 60
+# json = false
+# jsonl = false
+# tui = true
+# no-tui = false
+
+# Accept self-signed certificates on ldaps:// (needed for most lab setups).
+insecure = false
+
+# Bind DN for cn=monitor.  Empty means anonymous; EXTERNAL uses SASL peer
+# credentials (works over ldapi:// and requires nothing in the config).
+# bind = EXTERNAL
+
+# --- Theme -------------------------------------------------------------------
+# Colours are #rrggbb.  Omit a key to keep the built-in palette.
+
+[theme]
+accent = #ffd060
+ok     = #60d080
+warn   = #ffc050
+error  = #ff9070
+text   = #d0d0e0
+dim    = #9090a0
+frame  = #5a5a6a
+focus  = #9090d0
+
+# Pulse the CPU/ops graphs and the activity dot.  Disable for a calmer screen
+# or when running over a slow link.
+animate = true
+
+# `log-ttl` and `log-fade` are retired.  The log panel keeps its last lines,
+# anchored at the bottom, and fades only the oldest three to five lines on
+# screen, by position: nothing that was just printed is dimmed.  The keys are
+# still accepted so an existing configuration does not start warning.
+
+# Bitmap graphs: when the terminal supports kitty graphics or sixel (Konsole,
+# kitty, wezterm, foot), the cpu/mem/ops graphs are drawn as real bitmaps with
+# smooth slopes and colour ramps.  "auto" detects it, "off" forces block runes
+# (useful over a slow link, or through tmux which usually drops the protocol).
+pixel-graphs = auto
